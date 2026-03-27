@@ -1,0 +1,10 @@
+[package]
+name = "rust-project"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+ratatui = "0.29"
+crossterm = "0.29"
+noise = "0.9"
+rand = "0.9"
