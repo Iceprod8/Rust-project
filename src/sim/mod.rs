@@ -7,6 +7,7 @@ pub struct AppSkeleton {
 /// Construit le squelette initial avant l'arrivée de la vraie boucle de simulation.
 pub fn bootstrap() -> AppSkeleton {
     // On appelle chaque module ici pour valider que l'arborescence du crate est bien connectée.
+    crate::domain::register();
     crate::map::register();
     crate::robots::register();
     crate::base::register();
@@ -14,7 +15,7 @@ pub fn bootstrap() -> AppSkeleton {
     crate::ui::register();
 
     AppSkeleton {
-        module_count: 6,
+        module_count: 7,
         entrypoint: "src/main.rs",
     }
 }
