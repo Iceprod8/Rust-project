@@ -1,5 +1,6 @@
 pub mod base;
 pub mod comms;
+pub mod domain;
 pub mod map;
 pub mod robots;
 pub mod sim;
