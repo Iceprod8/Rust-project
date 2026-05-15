@@ -3,9 +3,7 @@ name: Test and build Rust project
 on:
   push:
     branches:
-      - "**"
-    tags:
-      - "v*"
+      - main
   pull_request:
   workflow_dispatch:
 
