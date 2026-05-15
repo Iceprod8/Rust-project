@@ -1,5 +1,5 @@
 use noise::{NoiseFn, Perlin};
-use rand::{rngs::StdRng, Rng, SeedableRng};
+use rand::{Rng, SeedableRng, rngs::StdRng};
 
 use crate::domain::{Position, ResourceNode, ResourceType, Tile};
 
