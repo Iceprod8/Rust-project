@@ -14,6 +14,14 @@ pub enum GridError {
     OutOfBounds(Position),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ValidationError {
+    MissingBase,
+    InvalidBase(Position),
+    NoSpawn,
+    InvalidSpawn(Position),
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ObstacleParams {
     pub seed: u32,
@@ -70,6 +78,7 @@ pub struct Grid {
     height: usize,
     tiles: Vec<Tile>,
     resources: Vec<ResourceNode>,
+    base: Option<Position>,
 }
 
 impl Grid {
@@ -79,6 +88,7 @@ impl Grid {
             height,
             tiles: vec![Tile::Empty; width.saturating_mul(height)],
             resources: Vec::new(),
+            base: None,
         }
     }
 
@@ -87,6 +97,13 @@ impl Grid {
 
         grid.generate_obstacles(ObstacleParams::new(seed));
         grid
+    }
+
+    pub fn with_base(width: usize, height: usize) -> Result<Self, GridError> {
+        let mut grid = Self::new(width, height);
+
+        grid.place_base()?;
+        Ok(grid)
     }
 
     pub fn with_resources(width: usize, height: usize, params: ResourceParams) -> Self {
@@ -108,6 +125,10 @@ impl Grid {
         &self.resources
     }
 
+    pub const fn base_position(&self) -> Option<Position> {
+        self.base
+    }
+
     pub fn in_bounds(&self, pos: Position) -> bool {
         pos.x >= 0 && pos.y >= 0 && (pos.x as usize) < self.width && (pos.y as usize) < self.height
     }
@@ -120,6 +141,7 @@ impl Grid {
         let idx = self.tile_index(pos).ok_or(GridError::OutOfBounds(pos))?;
 
         self.resources.retain(|resource| resource.position != pos);
+        self.update_base(pos, tile);
         self.tiles[idx] = tile;
         Ok(())
     }
@@ -138,6 +160,11 @@ impl Grid {
 
         for idx in 0..self.tiles.len() {
             if matches!(self.tiles[idx], Tile::Base | Tile::Resource(_)) {
+                continue;
+            }
+
+            if self.is_spawn_idx(idx) {
+                self.tiles[idx] = Tile::Empty;
                 continue;
             }
 
@@ -160,6 +187,56 @@ impl Grid {
         {
             self.tiles[idx] = Tile::Obstacle;
         }
+    }
+
+    pub fn place_base(&mut self) -> Result<Position, GridError> {
+        let pos = self.default_base_position();
+
+        if !self.in_bounds(pos) {
+            return Err(GridError::OutOfBounds(pos));
+        }
+
+        self.clear_base();
+
+        for spawn in self.base_neighbors(pos) {
+            self.set_tile(spawn, Tile::Empty)?;
+        }
+
+        self.set_tile(pos, Tile::Base)?;
+        Ok(pos)
+    }
+
+    pub fn spawn_positions(&self) -> Vec<Position> {
+        self.base
+            .map(|base| {
+                self.base_neighbors(base)
+                    .into_iter()
+                    .filter(|pos| self.is_walkable(*pos))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    pub fn validate_start(&self) -> Result<(), ValidationError> {
+        let base = self.base.ok_or(ValidationError::MissingBase)?;
+
+        if self.get_tile(base) != Some(Tile::Base) {
+            return Err(ValidationError::InvalidBase(base));
+        }
+
+        let spawns = self.base_neighbors(base);
+
+        if spawns.is_empty() {
+            return Err(ValidationError::NoSpawn);
+        }
+
+        for spawn in spawns {
+            if !self.is_walkable(spawn) {
+                return Err(ValidationError::InvalidSpawn(spawn));
+            }
+        }
+
+        Ok(())
     }
 
     pub fn place_resources(&mut self, params: ResourceParams) {
@@ -218,7 +295,9 @@ impl Grid {
         self.tiles
             .iter()
             .enumerate()
-            .filter_map(|(idx, tile)| matches!(tile, Tile::Empty).then_some(idx))
+            .filter_map(|(idx, tile)| {
+                (matches!(tile, Tile::Empty) && !self.is_spawn_idx(idx)).then_some(idx)
+            })
             .collect()
     }
 
@@ -230,6 +309,50 @@ impl Grid {
                 self.tiles[idx] = Tile::Empty;
             }
         }
+    }
+
+    fn clear_base(&mut self) {
+        if let Some(pos) = self.base.take() {
+            if let Some(idx) = self.tile_index(pos) {
+                if matches!(self.tiles[idx], Tile::Base) {
+                    self.tiles[idx] = Tile::Empty;
+                }
+            }
+        }
+    }
+
+    fn update_base(&mut self, pos: Position, tile: Tile) {
+        if matches!(tile, Tile::Base) {
+            self.clear_base();
+            self.base = Some(pos);
+        } else if self.base == Some(pos) {
+            self.base = None;
+        }
+    }
+
+    fn default_base_position(&self) -> Position {
+        Position::new((self.width / 2) as i32, (self.height / 2) as i32)
+    }
+
+    fn base_neighbors(&self, base: Position) -> Vec<Position> {
+        [
+            Position::new(base.x, base.y - 1),
+            Position::new(base.x + 1, base.y),
+            Position::new(base.x, base.y + 1),
+            Position::new(base.x - 1, base.y),
+        ]
+        .into_iter()
+        .filter(|pos| self.in_bounds(*pos))
+        .collect()
+    }
+
+    fn is_spawn_idx(&self, idx: usize) -> bool {
+        let Some(base) = self.base else {
+            return false;
+        };
+
+        let pos = self.pos_from_idx(idx);
+        (pos.x - base.x).abs() + (pos.y - base.y).abs() == 1
     }
 
     fn pos_from_idx(&self, idx: usize) -> Position {
