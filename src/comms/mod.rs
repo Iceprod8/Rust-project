@@ -120,9 +120,7 @@ pub enum StatusMessage {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ShutdownMessage {
     Requested,
-    Acknowledged {
-        actor: ActorId,
-    },
+    Acknowledged { actor: ActorId },
 }
 
 /// Alias exposes pour que tous les modules utilisent le meme type de canal.
