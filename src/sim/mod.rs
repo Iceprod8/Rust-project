@@ -8,6 +8,7 @@ pub struct AppSkeleton {
 pub fn bootstrap() -> AppSkeleton {
     // On appelle chaque module ici pour valider que l'arborescence du crate est bien connectée.
     crate::domain::register();
+    crate::knowledge::register();
     crate::map::register();
     crate::robots::register();
     crate::base::register();
@@ -15,7 +16,7 @@ pub fn bootstrap() -> AppSkeleton {
     crate::ui::register();
 
     AppSkeleton {
-        module_count: 7,
+        module_count: 8,
         entrypoint: "src/main.rs",
     }
 }
