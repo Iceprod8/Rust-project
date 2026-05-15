@@ -1,10 +1,13 @@
 use noise::{NoiseFn, Perlin};
+use rand::{rngs::StdRng, Rng, SeedableRng};
 
-use crate::domain::{Position, Tile};
+use crate::domain::{Position, ResourceNode, ResourceType, Tile};
 
 const DEFAULT_SCALE: f64 = 14.0;
 const DEFAULT_THRESHOLD: f64 = 0.32;
 const DEFAULT_MAX_DENSITY: f32 = 0.30;
+const MIN_RESOURCE_AMOUNT: u16 = 50;
+const MAX_RESOURCE_AMOUNT: u16 = 200;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GridError {
@@ -44,11 +47,29 @@ impl ObstacleParams {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResourceParams {
+    pub seed: u64,
+    pub energy: usize,
+    pub crystals: usize,
+}
+
+impl ResourceParams {
+    pub const fn new(seed: u64, energy: usize, crystals: usize) -> Self {
+        Self {
+            seed,
+            energy,
+            crystals,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Grid {
     width: usize,
     height: usize,
     tiles: Vec<Tile>,
+    resources: Vec<ResourceNode>,
 }
 
 impl Grid {
@@ -57,6 +78,7 @@ impl Grid {
             width,
             height,
             tiles: vec![Tile::Empty; width.saturating_mul(height)],
+            resources: Vec::new(),
         }
     }
 
@@ -67,12 +89,23 @@ impl Grid {
         grid
     }
 
+    pub fn with_resources(width: usize, height: usize, params: ResourceParams) -> Self {
+        let mut grid = Self::new(width, height);
+
+        grid.place_resources(params);
+        grid
+    }
+
     pub const fn width(&self) -> usize {
         self.width
     }
 
     pub const fn height(&self) -> usize {
         self.height
+    }
+
+    pub fn resources(&self) -> &[ResourceNode] {
+        &self.resources
     }
 
     pub fn in_bounds(&self, pos: Position) -> bool {
@@ -86,6 +119,7 @@ impl Grid {
     pub fn set_tile(&mut self, pos: Position, tile: Tile) -> Result<(), GridError> {
         let idx = self.tile_index(pos).ok_or(GridError::OutOfBounds(pos))?;
 
+        self.resources.retain(|resource| resource.position != pos);
         self.tiles[idx] = tile;
         Ok(())
     }
@@ -128,12 +162,101 @@ impl Grid {
         }
     }
 
+    pub fn place_resources(&mut self, params: ResourceParams) {
+        let mut rng = StdRng::seed_from_u64(params.seed);
+        self.clear_resources();
+
+        let mut free_tiles = self.free_tiles();
+
+        self.place_resource_type(
+            ResourceType::Energy,
+            params.energy,
+            &mut rng,
+            &mut free_tiles,
+        );
+        self.place_resource_type(
+            ResourceType::Crystal,
+            params.crystals,
+            &mut rng,
+            &mut free_tiles,
+        );
+    }
+
+    pub fn take_resource(&mut self, pos: Position) -> Option<ResourceType> {
+        let resource = self
+            .resources
+            .iter_mut()
+            .find(|resource| resource.position == pos)?;
+
+        if resource.remaining == 0 {
+            return None;
+        }
+
+        resource.remaining -= 1;
+        let resource_type = resource.resource_type;
+
+        if resource.remaining == 0 {
+            self.resources.retain(|resource| resource.position != pos);
+
+            if let Some(idx) = self.tile_index(pos) {
+                self.tiles[idx] = Tile::Empty;
+            }
+        }
+
+        Some(resource_type)
+    }
+
     fn tile_index(&self, pos: Position) -> Option<usize> {
         if !self.in_bounds(pos) {
             return None;
         }
 
         Some(pos.y as usize * self.width + pos.x as usize)
+    }
+
+    fn free_tiles(&self) -> Vec<usize> {
+        self.tiles
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, tile)| matches!(tile, Tile::Empty).then_some(idx))
+            .collect()
+    }
+
+    fn clear_resources(&mut self) {
+        let resources = std::mem::take(&mut self.resources);
+
+        for resource in resources {
+            if let Some(idx) = self.tile_index(resource.position) {
+                self.tiles[idx] = Tile::Empty;
+            }
+        }
+    }
+
+    fn pos_from_idx(&self, idx: usize) -> Position {
+        Position::new((idx % self.width) as i32, (idx / self.width) as i32)
+    }
+
+    fn place_resource_type(
+        &mut self,
+        resource_type: ResourceType,
+        count: usize,
+        rng: &mut StdRng,
+        free_tiles: &mut Vec<usize>,
+    ) {
+        for _ in 0..count {
+            if free_tiles.is_empty() {
+                return;
+            }
+
+            let choice = rng.random_range(0..free_tiles.len());
+            let idx = free_tiles.swap_remove(choice);
+            let pos = self.pos_from_idx(idx);
+            let remaining = rng.random_range(MIN_RESOURCE_AMOUNT..=MAX_RESOURCE_AMOUNT);
+
+            self.tiles[idx] = Tile::Resource(resource_type);
+            self.resources
+                .push(ResourceNode::new(pos, resource_type, remaining));
+        }
     }
 }
 
