@@ -17,6 +17,13 @@ pub struct ScoutReport {
     pub discoveries: Vec<Envelope>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Collector {
+    id: RobotId,
+    position: Position,
+    path: Vec<Position>,
+}
+
 impl Scout {
     pub fn new(id: RobotId, position: Position) -> Self {
         Self {
@@ -212,6 +219,190 @@ impl Scout {
             Position::new(self.position.x, self.position.y - 1),
         ]
     }
+}
+
+impl Collector {
+    pub fn new(id: RobotId, position: Position) -> Self {
+        Self {
+            id,
+            position,
+            path: Vec::new(),
+        }
+    }
+
+    pub fn id(&self) -> RobotId {
+        self.id
+    }
+
+    pub fn position(&self) -> Position {
+        self.position
+    }
+
+    pub fn path(&self) -> &[Position] {
+        &self.path
+    }
+
+    pub fn snapshot(&self) -> RobotSnapshot {
+        let state = if self.path.is_empty() {
+            RobotState::Idle
+        } else {
+            RobotState::MovingTo(self.path[self.path.len() - 1])
+        };
+
+        RobotSnapshot {
+            id: self.id,
+            kind: RobotKind::Collector,
+            position: self.position,
+            state,
+            carrying: None,
+        }
+    }
+
+    pub fn plan_path(&mut self, grid: &Grid, target: Position) -> bool {
+        let path = find_path(grid, self.position, target);
+
+        if path.is_empty() && self.position != target {
+            self.path.clear();
+            return false;
+        }
+
+        self.path = path;
+        true
+    }
+
+    pub fn plan_to_resource(
+        &mut self,
+        grid: &Grid,
+        knowledge: &SharedKnowledge,
+    ) -> Option<Position> {
+        let resources = knowledge.valid_resource_targets();
+
+        for resource in resources {
+            if self.plan_path(grid, resource.position) {
+                return Some(resource.position);
+            }
+        }
+
+        None
+    }
+
+    pub fn plan_to_base(&mut self, grid: &Grid) -> bool {
+        let base = grid.base_position();
+
+        if base.is_none() {
+            self.path.clear();
+            return false;
+        }
+
+        self.plan_path(grid, base.unwrap())
+    }
+
+    pub fn path_is_valid(&self, grid: &Grid) -> bool {
+        for pos in &self.path {
+            if !grid.is_walkable(*pos) {
+                return false;
+            }
+        }
+
+        true
+    }
+
+    pub fn move_one_step(&mut self, grid: &Grid) -> bool {
+        if self.path.is_empty() {
+            return false;
+        }
+
+        let next = self.path[0];
+
+        if !grid.is_walkable(next) {
+            self.path.clear();
+            return false;
+        }
+
+        self.position = next;
+        self.path.remove(0);
+        true
+    }
+}
+
+pub fn find_path(grid: &Grid, start: Position, target: Position) -> Vec<Position> {
+    let mut queue = Vec::new();
+    let mut visited = Vec::new();
+    let mut parents = Vec::new();
+
+    if !grid.in_bounds(start) || !grid.in_bounds(target) {
+        return Vec::new();
+    }
+
+    queue.push(start);
+    visited.push(start);
+
+    while !queue.is_empty() {
+        let current = queue.remove(0);
+
+        if current == target {
+            return build_path(start, target, parents);
+        }
+
+        for next in neighbors(current) {
+            if !grid.in_bounds(next) {
+                continue;
+            }
+
+            if !grid.is_walkable(next) {
+                continue;
+            }
+
+            if visited.contains(&next) {
+                continue;
+            }
+
+            visited.push(next);
+            parents.push((next, current));
+            queue.push(next);
+        }
+    }
+
+    Vec::new()
+}
+
+fn build_path(
+    start: Position,
+    target: Position,
+    parents: Vec<(Position, Position)>,
+) -> Vec<Position> {
+    let mut path = Vec::new();
+    let mut current = target;
+
+    while current != start {
+        path.push(current);
+
+        let mut found_parent = false;
+
+        for (child, parent) in &parents {
+            if *child == current {
+                current = *parent;
+                found_parent = true;
+                break;
+            }
+        }
+
+        if !found_parent {
+            return Vec::new();
+        }
+    }
+
+    path.reverse();
+    path
+}
+
+fn neighbors(pos: Position) -> Vec<Position> {
+    vec![
+        Position::new(pos.x + 1, pos.y),
+        Position::new(pos.x, pos.y + 1),
+        Position::new(pos.x - 1, pos.y),
+        Position::new(pos.x, pos.y - 1),
+    ]
 }
 
 pub fn register() {}
