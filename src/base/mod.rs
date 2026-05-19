@@ -1,4 +1,5 @@
-use crate::domain::{ResourceType, RobotId};
+use crate::comms::BaseMessage;
+use crate::domain::{Event, ResourceType, RobotId, WorldSnapshot};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct BaseStats {
@@ -68,6 +69,40 @@ impl BaseStorage {
             total_energy: self.energy,
             total_crystals: self.crystals,
         })
+    }
+
+    pub fn apply_to_snapshot(&self, snapshot: &mut WorldSnapshot) {
+        snapshot.collected_energy = self.energy;
+        snapshot.collected_crystals = self.crystals;
+    }
+
+    pub fn handle_deposit(&mut self, message: BaseMessage) -> Result<BaseMessage, DepositError> {
+        match message {
+            BaseMessage::DepositRequested {
+                robot_id,
+                resource_type,
+                amount,
+            } => {
+                let receipt = self.deposit(robot_id, resource_type, amount)?;
+
+                Ok(BaseMessage::DepositConfirmed {
+                    robot_id: receipt.robot_id,
+                    resource_type: receipt.resource_type,
+                    amount: receipt.amount,
+                    total_energy: receipt.total_energy,
+                    total_crystals: receipt.total_crystals,
+                })
+            }
+            BaseMessage::DepositConfirmed { .. } => Ok(message),
+        }
+    }
+
+    pub fn event_from_receipt(receipt: DepositReceipt) -> Event {
+        Event::ResourceDeposited {
+            robot_id: receipt.robot_id,
+            resource_type: receipt.resource_type,
+            amount: receipt.amount,
+        }
     }
 }
 
