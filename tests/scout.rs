@@ -1,6 +1,7 @@
-use rust_project::domain::{Position, RobotId, RobotKind, RobotState};
+use rust_project::comms::{DiscoveryMessage, Message};
+use rust_project::domain::{Position, ResourceType, RobotId, RobotKind, RobotState, Tile};
 use rust_project::knowledge::SharedKnowledge;
-use rust_project::map::Grid;
+use rust_project::map::{Grid, ResourceParams};
 use rust_project::robots::Scout;
 
 #[test]
@@ -31,6 +32,67 @@ fn scout_avoids_obstacles_known_by_the_shared_store() {
 
     assert_eq!(moved, true);
     assert_ne!(scout.position(), blocked);
+}
+
+#[test]
+fn scout_detects_obstacles_and_publishes_discovery() {
+    let mut grid = Grid::new(5, 5);
+    let knowledge = SharedKnowledge::new();
+    let obstacle = Position::new(2, 1);
+    let mut scout = Scout::new(RobotId(3), Position::new(1, 1));
+
+    grid.set_tile(obstacle, Tile::Obstacle).unwrap();
+
+    let messages = scout.scan(&grid, &knowledge);
+    let mut found_message = false;
+
+    for envelope in messages {
+        if let Message::Discovery(DiscoveryMessage::ObstacleFound { robot_id, position }) =
+            envelope.message
+        {
+            if robot_id == RobotId(3) && position == obstacle {
+                found_message = true;
+            }
+        }
+    }
+
+    assert_eq!(knowledge.is_obstacle_known(obstacle), true);
+    assert_eq!(found_message, true);
+}
+
+#[test]
+fn scout_detects_resources_without_collecting_them() {
+    let mut grid = Grid::new(5, 5);
+    let knowledge = SharedKnowledge::new();
+
+    grid.place_resources(ResourceParams::new(8, 1, 0));
+
+    let resource = grid.resources()[0].clone();
+    let start = Position::new(resource.position.x - 1, resource.position.y);
+    let mut scout = Scout::new(RobotId(4), start);
+
+    let messages = scout.scan(&grid, &knowledge);
+    let mut found_message = false;
+
+    for envelope in messages {
+        if let Message::Discovery(DiscoveryMessage::ResourceFound {
+            robot_id,
+            resource: found,
+        }) = envelope.message
+        {
+            if robot_id == RobotId(4) && found.position == resource.position {
+                found_message = true;
+            }
+        }
+    }
+
+    assert_eq!(
+        grid.get_tile(resource.position),
+        Some(Tile::Resource(ResourceType::Energy))
+    );
+    assert_eq!(grid.resources()[0].remaining, resource.remaining);
+    assert_eq!(knowledge.resource_at(resource.position).is_some(), true);
+    assert_eq!(found_message, true);
 }
 
 #[test]
