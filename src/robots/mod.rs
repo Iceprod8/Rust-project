@@ -270,6 +270,43 @@ impl Collector {
         true
     }
 
+    pub fn plan_to_resource(
+        &mut self,
+        grid: &Grid,
+        knowledge: &SharedKnowledge,
+    ) -> Option<Position> {
+        let resources = knowledge.valid_resource_targets();
+
+        for resource in resources {
+            if self.plan_path(grid, resource.position) {
+                return Some(resource.position);
+            }
+        }
+
+        None
+    }
+
+    pub fn plan_to_base(&mut self, grid: &Grid) -> bool {
+        let base = grid.base_position();
+
+        if base.is_none() {
+            self.path.clear();
+            return false;
+        }
+
+        self.plan_path(grid, base.unwrap())
+    }
+
+    pub fn path_is_valid(&self, grid: &Grid) -> bool {
+        for pos in &self.path {
+            if !grid.is_walkable(*pos) {
+                return false;
+            }
+        }
+
+        true
+    }
+
     pub fn move_one_step(&mut self, grid: &Grid) -> bool {
         if self.path.is_empty() {
             return false;
