@@ -1,6 +1,7 @@
-use rust_project::domain::{Position, ResourceNode, ResourceType, RobotId, Tile};
+use rust_project::base::BaseStorage;
+use rust_project::domain::{Position, ResourceNode, ResourceType, RobotId, RobotState, Tile};
 use rust_project::knowledge::SharedKnowledge;
-use rust_project::map::Grid;
+use rust_project::map::{Grid, ResourceParams};
 use rust_project::robots::{Collector, find_path};
 
 #[test]
@@ -62,7 +63,26 @@ fn collector_plans_path_to_known_resource() {
     let selected = collector.plan_to_resource(&grid, &knowledge);
 
     assert_eq!(selected, Some(target));
+    assert_eq!(collector.target(), Some(target));
+    assert_eq!(collector.state(), RobotState::MovingTo(target));
     assert_eq!(collector.path().last(), Some(&target));
+}
+
+#[test]
+fn collector_ignores_known_resource_missing_from_grid() {
+    let grid = Grid::new(6, 4);
+    let knowledge = SharedKnowledge::new();
+    let target = Position::new(5, 2);
+    let mut collector = Collector::new(RobotId(15), Position::new(0, 0));
+
+    knowledge.record_resource(ResourceNode::new(target, ResourceType::Crystal, 80));
+
+    let selected = collector.plan_to_resource(&grid, &knowledge);
+
+    assert_eq!(selected, None);
+    assert_eq!(collector.target(), None);
+    assert_eq!(collector.state(), RobotState::Idle);
+    assert_eq!(knowledge.is_resource_depleted(target), true);
 }
 
 #[test]
@@ -94,4 +114,61 @@ fn collector_clears_path_when_next_step_is_blocked() {
     assert_eq!(collector.move_one_step(&grid), false);
     assert_eq!(collector.path().is_empty(), true);
     assert_eq!(collector.position(), Position::new(0, 0));
+}
+
+#[test]
+fn collector_collects_one_unit_at_a_time() {
+    let mut grid = Grid::with_base(7, 7).unwrap();
+    let knowledge = SharedKnowledge::new();
+    let mut base = BaseStorage::new();
+
+    grid.place_resources(ResourceParams::new(22, 1, 0));
+
+    let resource = grid.resources()[0].clone();
+    let mut collector = Collector::new(RobotId(16), resource.position);
+
+    knowledge.record_resource(resource.clone());
+
+    assert_eq!(collector.tick(&mut grid, &knowledge, &mut base), true);
+    assert_eq!(collector.carrying(), Some(resource.resource_type));
+    assert_eq!(collector.state(), RobotState::ReturningToBase);
+    assert_eq!(base.energy() + base.crystals(), 0);
+
+    let known = knowledge.resource_at(resource.position).unwrap();
+
+    assert_eq!(known.remaining, resource.remaining - 1);
+}
+
+#[test]
+fn collector_returns_unloads_and_starts_again() {
+    let mut grid = Grid::with_base(8, 8).unwrap();
+    let knowledge = SharedKnowledge::new();
+    let mut base = BaseStorage::new();
+
+    grid.place_resources(ResourceParams::new(30, 1, 0));
+
+    let resource = grid.resources()[0].clone();
+    let base_pos = grid.base_position().unwrap();
+    let mut collector = Collector::new(RobotId(17), base_pos);
+
+    knowledge.record_resource(resource);
+
+    for _ in 0..80 {
+        collector.tick(&mut grid, &knowledge, &mut base);
+
+        if base.energy() == 1 {
+            break;
+        }
+    }
+
+    assert_eq!(base.energy(), 1);
+    assert_eq!(collector.position(), base_pos);
+    assert_eq!(collector.carrying(), None);
+    assert_eq!(collector.state(), RobotState::Idle);
+
+    assert_eq!(collector.tick(&mut grid, &knowledge, &mut base), true);
+    assert_eq!(
+        collector.target().is_some() || collector.carrying().is_some(),
+        true
+    );
 }
