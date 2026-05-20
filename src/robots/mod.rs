@@ -1,5 +1,8 @@
+use crate::base::BaseStorage;
 use crate::comms::{ActorId, DiscoveryMessage, Envelope, Message};
-use crate::domain::{Position, ResourceNode, RobotId, RobotKind, RobotSnapshot, RobotState, Tile};
+use crate::domain::{
+    Position, ResourceNode, ResourceType, RobotId, RobotKind, RobotSnapshot, RobotState, Tile,
+};
 use crate::knowledge::SharedKnowledge;
 use crate::map::Grid;
 
@@ -24,7 +27,7 @@ pub struct Collector {
     path: Vec<Position>,
     target: Option<Position>,
     state: RobotState,
-    carrying: Option<crate::domain::ResourceType>,
+    carrying: Option<ResourceType>,
 }
 
 impl Scout {
@@ -256,7 +259,7 @@ impl Collector {
         self.state.clone()
     }
 
-    pub fn carrying(&self) -> Option<crate::domain::ResourceType> {
+    pub fn carrying(&self) -> Option<ResourceType> {
         self.carrying
     }
 
@@ -350,6 +353,170 @@ impl Collector {
         self.path.remove(0);
         true
     }
+
+    pub fn tick(
+        &mut self,
+        grid: &mut Grid,
+        knowledge: &SharedKnowledge,
+        base: &mut BaseStorage,
+    ) -> bool {
+        let state = self.state.clone();
+
+        match state {
+            RobotState::Idle => self.start_or_return(grid, knowledge, base),
+            RobotState::MovingTo(_) => self.go_to_resource(grid, knowledge),
+            RobotState::Collecting(_) => self.collect_resource(grid, knowledge),
+            RobotState::ReturningToBase => self.return_to_base(grid, base),
+            RobotState::Unloading => self.unload_resource(base),
+            RobotState::Exploring => false,
+        }
+    }
+
+    fn start_or_return(
+        &mut self,
+        grid: &mut Grid,
+        knowledge: &SharedKnowledge,
+        base: &mut BaseStorage,
+    ) -> bool {
+        if self.carrying.is_some() {
+            self.state = RobotState::ReturningToBase;
+            return self.return_to_base(grid, base);
+        }
+
+        if self.plan_to_resource(grid, knowledge).is_none() {
+            return false;
+        }
+
+        self.go_to_resource(grid, knowledge)
+    }
+
+    fn go_to_resource(&mut self, grid: &mut Grid, knowledge: &SharedKnowledge) -> bool {
+        let target = match self.target {
+            Some(pos) => pos,
+            None => {
+                self.state = RobotState::Idle;
+                return false;
+            }
+        };
+
+        let resource_type = match resource_type_at(grid, target) {
+            Some(found) => found,
+            None => {
+                knowledge.mark_resource_depleted(target);
+                self.target = None;
+                self.path.clear();
+                self.state = RobotState::Idle;
+                return false;
+            }
+        };
+
+        if self.position == target {
+            self.state = RobotState::Collecting(resource_type);
+            return self.collect_resource(grid, knowledge);
+        }
+
+        if self.path.is_empty() || !self.path_is_valid(grid) {
+            if !self.plan_path(grid, target) {
+                self.target = None;
+                self.state = RobotState::Idle;
+                return false;
+            }
+        }
+
+        self.state = RobotState::MovingTo(target);
+
+        if !self.move_one_step(grid) {
+            self.state = RobotState::Idle;
+            return false;
+        }
+
+        if self.position == target {
+            self.state = RobotState::Collecting(resource_type);
+        }
+
+        true
+    }
+
+    fn collect_resource(&mut self, grid: &mut Grid, knowledge: &SharedKnowledge) -> bool {
+        if self.carrying.is_some() {
+            self.state = RobotState::ReturningToBase;
+            return false;
+        }
+
+        let target = match self.target {
+            Some(pos) => pos,
+            None => {
+                self.state = RobotState::Idle;
+                return false;
+            }
+        };
+
+        let collected = grid.take_resource(target);
+
+        match collected {
+            Some(resource_type) => {
+                self.carrying = Some(resource_type);
+                self.target = None;
+                self.path.clear();
+                self.state = RobotState::ReturningToBase;
+                update_resource_memory(grid, knowledge, target, resource_type);
+                true
+            }
+            None => {
+                knowledge.mark_resource_depleted(target);
+                self.target = None;
+                self.path.clear();
+                self.state = RobotState::Idle;
+                false
+            }
+        }
+    }
+
+    fn return_to_base(&mut self, grid: &Grid, base: &mut BaseStorage) -> bool {
+        if self.carrying.is_none() {
+            self.state = RobotState::Idle;
+            return false;
+        }
+
+        let base_pos = match grid.base_position() {
+            Some(pos) => pos,
+            None => return false,
+        };
+
+        if self.position == base_pos {
+            self.state = RobotState::Unloading;
+            return self.unload_resource(base);
+        }
+
+        if self.path.is_empty() || !self.path_is_valid(grid) {
+            if !self.plan_to_base(grid) {
+                return false;
+            }
+        }
+
+        self.state = RobotState::ReturningToBase;
+        self.move_one_step(grid)
+    }
+
+    fn unload_resource(&mut self, base: &mut BaseStorage) -> bool {
+        let resource_type = match self.carrying {
+            Some(found) => found,
+            None => {
+                self.state = RobotState::Idle;
+                return false;
+            }
+        };
+
+        if base.deposit(self.id, resource_type, 1).is_err() {
+            return false;
+        }
+
+        self.carrying = None;
+        self.target = None;
+        self.path.clear();
+        self.state = RobotState::Idle;
+        true
+    }
 }
 
 pub fn find_path(grid: &Grid, start: Position, target: Position) -> Vec<Position> {
@@ -430,6 +597,35 @@ fn neighbors(pos: Position) -> Vec<Position> {
         Position::new(pos.x - 1, pos.y),
         Position::new(pos.x, pos.y - 1),
     ]
+}
+
+fn resource_type_at(grid: &Grid, pos: Position) -> Option<ResourceType> {
+    match grid.get_tile(pos) {
+        Some(Tile::Resource(resource_type)) => Some(resource_type),
+        _ => None,
+    }
+}
+
+fn update_resource_memory(
+    grid: &Grid,
+    knowledge: &SharedKnowledge,
+    pos: Position,
+    resource_type: ResourceType,
+) {
+    let mut remaining = 0;
+
+    for resource in grid.resources() {
+        if resource.position == pos {
+            remaining = resource.remaining;
+            break;
+        }
+    }
+
+    if remaining == 0 {
+        knowledge.mark_resource_depleted(pos);
+    } else {
+        knowledge.record_resource(ResourceNode::new(pos, resource_type, remaining));
+    }
 }
 
 pub fn register() {}
