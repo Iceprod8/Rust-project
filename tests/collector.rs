@@ -1,4 +1,4 @@
-use rust_project::domain::{Position, ResourceNode, ResourceType, RobotId, Tile};
+use rust_project::domain::{Position, ResourceNode, ResourceType, RobotId, RobotState, Tile};
 use rust_project::knowledge::SharedKnowledge;
 use rust_project::map::Grid;
 use rust_project::robots::{Collector, find_path};
@@ -62,7 +62,26 @@ fn collector_plans_path_to_known_resource() {
     let selected = collector.plan_to_resource(&grid, &knowledge);
 
     assert_eq!(selected, Some(target));
+    assert_eq!(collector.target(), Some(target));
+    assert_eq!(collector.state(), RobotState::MovingTo(target));
     assert_eq!(collector.path().last(), Some(&target));
+}
+
+#[test]
+fn collector_ignores_known_resource_missing_from_grid() {
+    let grid = Grid::new(6, 4);
+    let knowledge = SharedKnowledge::new();
+    let target = Position::new(5, 2);
+    let mut collector = Collector::new(RobotId(15), Position::new(0, 0));
+
+    knowledge.record_resource(ResourceNode::new(target, ResourceType::Crystal, 80));
+
+    let selected = collector.plan_to_resource(&grid, &knowledge);
+
+    assert_eq!(selected, None);
+    assert_eq!(collector.target(), None);
+    assert_eq!(collector.state(), RobotState::Idle);
+    assert_eq!(knowledge.is_resource_depleted(target), true);
 }
 
 #[test]

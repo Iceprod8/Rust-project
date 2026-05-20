@@ -22,6 +22,9 @@ pub struct Collector {
     id: RobotId,
     position: Position,
     path: Vec<Position>,
+    target: Option<Position>,
+    state: RobotState,
+    carrying: Option<crate::domain::ResourceType>,
 }
 
 impl Scout {
@@ -227,6 +230,9 @@ impl Collector {
             id,
             position,
             path: Vec::new(),
+            target: None,
+            state: RobotState::Idle,
+            carrying: None,
         }
     }
 
@@ -242,19 +248,25 @@ impl Collector {
         &self.path
     }
 
-    pub fn snapshot(&self) -> RobotSnapshot {
-        let state = if self.path.is_empty() {
-            RobotState::Idle
-        } else {
-            RobotState::MovingTo(self.path[self.path.len() - 1])
-        };
+    pub fn target(&self) -> Option<Position> {
+        self.target
+    }
 
+    pub fn state(&self) -> RobotState {
+        self.state.clone()
+    }
+
+    pub fn carrying(&self) -> Option<crate::domain::ResourceType> {
+        self.carrying
+    }
+
+    pub fn snapshot(&self) -> RobotSnapshot {
         RobotSnapshot {
             id: self.id,
             kind: RobotKind::Collector,
             position: self.position,
-            state,
-            carrying: None,
+            state: self.state.clone(),
+            carrying: self.carrying,
         }
     }
 
@@ -278,11 +290,20 @@ impl Collector {
         let resources = knowledge.valid_resource_targets();
 
         for resource in resources {
+            if grid.get_tile(resource.position) != Some(Tile::Resource(resource.resource_type)) {
+                knowledge.mark_resource_depleted(resource.position);
+                continue;
+            }
+
             if self.plan_path(grid, resource.position) {
+                self.target = Some(resource.position);
+                self.state = RobotState::MovingTo(resource.position);
                 return Some(resource.position);
             }
         }
 
+        self.target = None;
+        self.state = RobotState::Idle;
         None
     }
 
@@ -294,7 +315,13 @@ impl Collector {
             return false;
         }
 
-        self.plan_path(grid, base.unwrap())
+        let planned = self.plan_path(grid, base.unwrap());
+
+        if planned {
+            self.state = RobotState::ReturningToBase;
+        }
+
+        planned
     }
 
     pub fn path_is_valid(&self, grid: &Grid) -> bool {
