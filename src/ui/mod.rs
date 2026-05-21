@@ -1,4 +1,67 @@
+use std::io::{self, Stdout};
+
+use crossterm::{
+    execute,
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
+};
+use ratatui::{
+    Frame, Terminal,
+    backend::{Backend, CrosstermBackend},
+    widgets::Paragraph,
+};
+
 use crate::domain::{Position, ResourceType, RobotKind, WorldSnapshot};
+
+pub type AppTerminal = Terminal<CrosstermBackend<Stdout>>;
+
+pub fn start_terminal() -> io::Result<AppTerminal> {
+    enable_raw_mode()?;
+
+    let mut stdout = io::stdout();
+    execute!(stdout, EnterAlternateScreen)?;
+
+    let backend = CrosstermBackend::new(stdout);
+    Terminal::new(backend)
+}
+
+pub fn stop_terminal(terminal: &mut AppTerminal) -> io::Result<()> {
+    disable_raw_mode()?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    terminal.show_cursor()?;
+    Ok(())
+}
+
+pub fn render_world<B: Backend>(
+    terminal: &mut Terminal<B>,
+    snapshot: &WorldSnapshot,
+) -> io::Result<()> {
+    terminal.draw(|frame| draw_world(frame, snapshot))?;
+    Ok(())
+}
+
+pub fn draw_world(frame: &mut Frame, snapshot: &WorldSnapshot) {
+    let text = display_lines(snapshot).join("\n");
+    let paragraph = Paragraph::new(text);
+
+    frame.render_widget(paragraph, frame.area());
+}
+
+pub fn display_lines(snapshot: &WorldSnapshot) -> Vec<String> {
+    let mut lines = Vec::new();
+
+    lines.push(format!("Tick: {}", snapshot.tick));
+    lines.push(format!(
+        "Energie: {} | Cristaux: {}",
+        snapshot.collected_energy, snapshot.collected_crystals
+    ));
+    lines.push(String::new());
+
+    for line in map_lines(snapshot) {
+        lines.push(line);
+    }
+
+    lines
+}
 
 pub fn map_lines(snapshot: &WorldSnapshot) -> Vec<String> {
     let (width, height) = map_size(snapshot);

@@ -2,7 +2,9 @@ use rust_project::domain::{
     Position, ResourceNode, ResourceType, RobotId, RobotKind, RobotSnapshot, RobotState,
     WorldSnapshot,
 };
-use rust_project::ui::map_lines;
+use rust_project::ui::{display_lines, map_lines, render_world};
+
+use ratatui::{Terminal, backend::TestBackend};
 
 #[test]
 fn map_lines_put_elements_at_their_position() {
@@ -57,4 +59,52 @@ fn robot_is_drawn_above_the_base() {
     let lines = map_lines(&snapshot);
 
     assert_eq!(lines[2].chars().nth(2), Some('R'));
+}
+
+#[test]
+fn display_lines_show_stats_and_map() {
+    let snapshot = WorldSnapshot {
+        tick: 12,
+        base_position: Position::new(0, 0),
+        robots: Vec::new(),
+        resources: Vec::new(),
+        obstacles: Vec::new(),
+        collected_energy: 3,
+        collected_crystals: 4,
+        events: Vec::new(),
+    };
+
+    let lines = display_lines(&snapshot);
+
+    assert_eq!(lines[0], "Tick: 12");
+    assert_eq!(lines[1], "Energie: 3 | Cristaux: 4");
+    assert_eq!(lines[3], "B");
+}
+
+#[test]
+fn ratatui_backend_can_render_snapshot() {
+    let snapshot = WorldSnapshot {
+        tick: 2,
+        base_position: Position::new(1, 1),
+        robots: Vec::new(),
+        resources: vec![ResourceNode::new(
+            Position::new(0, 0),
+            ResourceType::Energy,
+            8,
+        )],
+        obstacles: Vec::new(),
+        collected_energy: 1,
+        collected_crystals: 0,
+        events: Vec::new(),
+    };
+    let backend = TestBackend::new(20, 8);
+    let mut terminal = Terminal::new(backend).unwrap();
+
+    render_world(&mut terminal, &snapshot).unwrap();
+
+    let buffer = terminal.backend().buffer();
+
+    assert_eq!(buffer.cell((0, 0)).unwrap().symbol(), "T");
+    assert_eq!(buffer.cell((0, 3)).unwrap().symbol(), "E");
+    assert_eq!(buffer.cell((1, 4)).unwrap().symbol(), "B");
 }
